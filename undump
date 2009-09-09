@@ -1,0 +1,320 @@
+#!/usr/bin/env ruby
+
+#
+# MySQL Database Dump Handler
+#
+# Example: 
+#
+#   undump dbname-dump.sql.gz
+#
+
+require 'rubygems'
+require 'yaml'
+require 'optparse'
+require 'mysql'
+
+class Undumper
+  STREAM_ADDITIONS = {
+    :before => [
+      "SET FOREIGN_KEY_CHECKS=0",
+      "SET AUTOCOMMIT=0"
+    ],
+    :after => [
+      "SET FOREIGN_KEY_CHECKS=1",
+      "COMMIT",
+      "SET AUTOCOMMIT=1"
+    ]
+  }
+  
+  def initialize(filename, options = { })
+    @filename = filename
+    @options = options
+    
+    yield(self) if (block_given?)
+  end
+
+  def connection_info
+    c = database_config
+
+    [
+      [ 'hostname', c['hostname'] || 'localhost' ],
+      [ 'username', c['username'] || 'mysql' ],
+      [ 'password', c['password'] || '' ],
+      [ 'database', c['database'] ],
+      [ 'port', c['port'] ],
+      [ 'socket', c['socket'] ]
+    ]
+  end
+
+  def connection
+    @connection ||=
+      begin
+        c = database_config
+        Mysql.new(
+          c['hostname'] || 'localhost',
+          c['username'] || 'mysql',
+          c['password'] || '',
+          c['database'],
+          c['port'],
+          c['socket']
+        )
+      end
+  end
+  
+  def execute(sql)
+    begin
+      if (@options[:debug])
+        puts sql + "\n" + '-' * 78 + "\n"
+      end
+      
+      connection.query(sql) do |res|
+        res.free
+      end
+    rescue => e
+      puts "On line:\n#{sql}\nException: #{e} (#{e.class})"
+      raise e
+    end
+  end
+  
+  def database_config
+    @database_config ||= database_config_contents[@options[:env] || ENV['RAILS_ENV'] || 'development']
+  end
+
+  def database_config_contents
+    return @database_config_contents if (@database_config_contents)
+
+    path = '.'
+    
+    while (File.exists?(path) and (path.length < 255))
+      if (File.exists?("#{path}/config/database.yml"))
+        File.open("#{path}/config/database.yml") do |f|
+          @database_config_contents = YAML.load(f)
+          
+          return @database_config_contents
+        end
+      else
+        path = "../#{path}"
+      end
+    end
+    
+    nil
+  end
+
+  def undump!
+    table_data = { }
+
+    STDERR.puts "Scanning input file #{@filename}"
+
+    open_file(@filename) do |fh|
+      scan_input_from(fh, table_data)
+    end
+
+    inject_additions(:before)
+    
+    if (@options[:rebuild])
+      puts "Rebuilding #{database_config['database']}"
+      execute("DROP DATABASE #{database_config['database']}")
+      execute("CREATE DATABASE #{database_config['database']}")
+    end
+    
+    execute("USE #{database_config['database']}")
+
+    open_file(@filename) do |fh|
+      read_input_from(fh, table_data, @options)
+    end
+
+    inject_additions(:after)
+  end
+
+  def inject_additions(stage)
+    STREAM_ADDITIONS[stage].each do |command|
+      execute(command)
+    end
+  end
+
+  def time_elapsed(from_time)
+    seconds = Time.now.to_f - from_time.to_f
+
+    seconds > 3600 ?
+      "%d:%02d:%02d" % [ seconds / 3600, (seconds / 60) % 60, seconds % 60 ] :
+      "%d:%02d" % [ (seconds / 60) % 60, seconds % 60 ]
+  end
+
+  def scan_input_from(fh, table_data)
+    while (line = fh.gets)
+      if (m = line.match(/^CREATE TABLE `([^`]+)`/))
+        table_data[m[1]] = { }
+      elsif (m = line.match(/^INSERT INTO `([^`]+)`/))
+        table_data[m[1]][:inserts] ||= 0
+        table_data[m[1]][:inserts] += 1
+      end
+    end
+  end
+  
+  def should_skip_table?(table)
+    @options[:skip_tables][table] or (@options[:only_tables] and !@options[:only_tables][table])
+  end
+
+  def read_input_from(fh, table_data, options)
+    @options = options
+    
+    block_count = 0
+    start_time = nil
+    on_table = nil
+    
+    injections = [ ]
+    buffer = ''
+    ignore = false
+
+    while (line = injections.shift || fh.gets)
+      line.gsub!(/^\/\*\!\d{5} (.*)/, '\1')
+      line.gsub!(/\*\/(;)?\s*$/, '\\1')
+
+      if (line.match(/SET NAMES/) and options[:charset])
+        line = "SET NAMES #{options[:charset]};"
+      elsif (m = line.match(/^CREATE TABLE `([^`]+)`/))
+        if (should_skip_table?(m[1]))
+          ignore = true
+        else
+          STDERR.puts "Create table: #{m[1]}"
+          block_count = 0
+          start_time = Time.now
+        end
+      elsif (m = line.match(/VIEW `([^`]+)`/))
+        if (should_skip_table?(m[1]) and buffer.match(/^\s*CREATE/))
+          ignore = true
+        end
+      elsif (m = line.match(/^DROP (?:TABLE|VIEW)(?: IF EXISTS)? `([^`]+)`/))
+        if (should_skip_table?(m[1]))
+          ignore = true
+        end
+      elsif (m = line. match(/^LOCK TABLES `([^`]+)`/))
+        on_table = m[1]
+
+        if (should_skip_table?(m[1]))
+          line = nil
+        end
+      elsif (m = line. match(/^UNLOCK TABLES `([^`]+)`/))
+        if (should_skip_table?(m[1]))
+          line = nil
+        end
+      elsif (m = line.match(/^ALTER TABLE `([^`]+)`/))
+        if (should_skip_table?(m[1]))
+          line = nil
+        end
+      elsif (m = line.match(/^INSERT INTO `([^`]+)`/))
+        if (should_skip_table?(m[1]) || options[:skip_data][m[1]])
+          line = nil
+        else
+          block_count += 1
+          total_count = ((table_data[m[1]] and table_data[m[1]][:inserts]) or 0)
+          STDERR.print "\r  Insert #{block_count}/#{total_count}"
+          STDERR.flush
+          STDERR.puts " (#{time_elapsed(start_time)})" if (block_count == total_count)
+        end
+      elsif (line.match(/DEFINER=/))
+        line = nil
+      end
+      
+      if (line and line.match(/\S/) and !line.match(/^\-\-/))
+        buffer << line 
+      end
+      
+      if (buffer.match(/;\s*$/))
+        execute(buffer) unless (ignore)
+        buffer = ''
+        ignore = false
+      end
+    end
+  end
+
+  def open_file(filename, &block)
+    command = case (filename.split('.').last)
+    when 'gz'
+      [ "gunzip", "-dc", filename ]
+    when 'bz2'
+      [ "bzip2", "-dc", filename ]
+    else
+      nil
+    end
+
+    if (command)
+      IO.popen(command * ' ', 'rb') do |fh|
+        yield(fh)
+      end
+    else
+      File.open(filename, 'rb') do |fh|
+        yield(fh)
+      end
+    end
+  end
+end
+
+# -- Utility Methods --------------------------------------------------------
+
+def comma_separated_to_hash(s)
+  s.split(/,/).inject({ }) { |h, t| h[t] = true; h }
+end
+
+# -- Main -------------------------------------------------------------------
+
+options = {
+  :skip_tables => { },
+  :skip_data => { },
+  :only_tables => nil
+}
+
+opts = OptionParser.new
+
+
+opts.on('-c', '--charset=s') do |s|
+  options[:charset] = comma_separated_to_hash(s)
+end
+
+opts.on('-s', '--skip=s') do |s|
+  options[:skip_tables] = comma_separated_to_hash(s)
+end
+
+opts.on('-o', '--only=s') do |s|
+  options[:only_tables] = comma_separated_to_hash(s)
+end
+
+opts.on('-x', '--skip-data=s') do |s|
+  options[:skip_data] = comma_separated_to_hash(s)
+end
+
+opts.on('-r', '--rebuild') do
+  options[:rebuild] = true
+end
+
+opts.on('-i', '--info') do
+  options[:info] = true
+end
+
+opts.on('-d', '--debug') do
+  options[:debug] = true
+end
+
+opts.on('-e', '--env=s') do |env|
+  options[:env] = env
+end
+
+args = opts.parse(*ARGV)
+
+if (options[:info])
+  Undumper.new(nil, options) do |undumper|
+    info = undumper.connection_info
+    
+    column_width = info.inject(0) { |c,r| r[0].length > c ? r[0].length : c }
+    
+    info.each do |r|
+      puts "%#{column_width}s = %s" % r
+    end
+  end
+end
+
+args.each do |arg|
+  Undumper.new(arg, options) do |undumper|
+    undumper.undump!
+  end
+end
