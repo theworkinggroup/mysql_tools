@@ -54,7 +54,7 @@ class Undumper
           c['hostname'] || 'localhost',
           c['username'] || 'mysql',
           c['password'] || '',
-          c['database'],
+          '',
           c['port'],
           c['socket']
         )
@@ -108,16 +108,18 @@ class Undumper
     open_file(@filename) do |fh|
       scan_input_from(fh, table_data)
     end
-
-    inject_additions(:before)
     
     if (@options[:rebuild])
       puts "Rebuilding #{database_config['database']}"
-      execute("DROP DATABASE #{database_config['database']}")
+      execute("DROP DATABASE IF EXISTS #{database_config['database']}")
       execute("CREATE DATABASE #{database_config['database']}")
     end
     
-    execute("USE #{database_config['database']}")
+    unless (@options[:skip_use])
+      execute("USE #{database_config['database']}")
+    end      
+
+    inject_additions(:before)
 
     open_file(@filename) do |fh|
       read_input_from(fh, table_data, @options)
@@ -142,7 +144,7 @@ class Undumper
 
   def scan_input_from(fh, table_data)
     while (line = fh.gets)
-      if (m = line.match(/^CREATE TABLE `([^`]+)`/))
+      if (m = line.match(/^CREATE TABLE (?:IF NOT EXISTS )?`([^`]+)`/))
         table_data[m[1]] = { }
       elsif (m = line.match(/^INSERT INTO `([^`]+)`/))
         table_data[m[1]][:inserts] ||= 0
@@ -214,6 +216,8 @@ class Undumper
         end
       elsif (line.match(/DEFINER=/))
         line = nil
+      elsif (line.match(/CREATE DATABASE `([^`]+)`/))
+        execute("DROP DATABASE IF EXISTS `#{$1}`")
       end
       
       if (line and line.match(/\S/) and !line.match(/^\-\-/))
@@ -261,6 +265,7 @@ end
 options = {
   :skip_tables => { },
   :skip_data => { },
+  :skip_use => false,
   :only_tables => nil
 }
 
@@ -268,7 +273,7 @@ opts = OptionParser.new
 
 
 opts.on('-c', '--charset=s') do |s|
-  options[:charset] = comma_separated_to_hash(s)
+  options[:charset] = s
 end
 
 opts.on('-s', '--skip=s') do |s|
@@ -297,6 +302,10 @@ end
 
 opts.on('-e', '--env=s') do |env|
   options[:env] = env
+end
+
+opts.on('-u', '--skip-use') do
+  options[:skip_use] = true
 end
 
 args = opts.parse(*ARGV)
