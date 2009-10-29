@@ -215,11 +215,11 @@ class Undumper
           STDERR.flush
           STDERR.puts " (#{time_elapsed(start_time)})" if (block_count == total_count)
         end
-      elsif (line.match(/DEFINER=/))
-        line = nil
       elsif (line.match(/CREATE DATABASE `([^`]+)`/))
         execute("DROP DATABASE IF EXISTS `#{$1}`")
       end
+      
+      line.sub(/DEFINER=`[^`]+`@`[^`]+` (?:SQL SECURITY DEFINER)? /, '')
       
       if (line and line.match(/\S/) and !line.match(/^\-\-/))
         buffer << line 
