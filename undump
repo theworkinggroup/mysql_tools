@@ -224,6 +224,9 @@ class Undumper
         line = nil
       elsif (line.match(/CREATE DATABASE `([^`]+)`/))
         execute("DROP DATABASE IF EXISTS `#{$1}`")
+      elsif (line.match(/DEFINER (.*)/))
+        delimiter = $1
+        line = nil
       end
       
       if (line and line.match(/\S/) and !line.match(/^\-\-/))
