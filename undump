@@ -37,7 +37,7 @@ class Undumper
     c = database_config
 
     [
-      [ 'hostname', c['host'] || 'localhost' ],
+      [ 'hostname', c['hostname'] || 'localhost' ],
       [ 'username', c['username'] || 'mysql' ],
       [ 'password', c['password'] || '' ],
       [ 'database', c['database'] ],
@@ -51,7 +51,7 @@ class Undumper
       begin
         c = database_config
         Mysql.new(
-          c['host'] || 'localhost',
+          c['hostname'] || 'localhost',
           c['username'] || 'mysql',
           c['password'] || '',
           '',
@@ -67,8 +67,14 @@ class Undumper
         puts sql + "\n" + '-' * 78 + "\n"
       end
       
-      connection.query(sql) do |res|
-        res.free
+      if (@options[:dry_run])
+        # Ignore this call in dry-run mode
+      elsif (@options[:output])
+        puts sql
+      else
+        connection.query(sql) do |res|
+          res.free
+        end
       end
     rescue => e
       puts "On line:\n#{sql}\nException: #{e} (#{e.class})"
@@ -164,13 +170,11 @@ class Undumper
     start_time = nil
     on_table = nil
     
-    delimiter = ';'
     injections = [ ]
     buffer = ''
     ignore = false
 
     while (line = injections.shift || fh.gets)
-      line.gsub!(/^\/\*\!\d{5} (.*?)\*\//, '\1')
       line.gsub!(/^\/\*\!\d{5} (.*)/, '\1')
       line.gsub!(/\*\/(;)?\s*$/, '\\1')
 
@@ -216,19 +220,17 @@ class Undumper
           STDERR.flush
           STDERR.puts " (#{time_elapsed(start_time)})" if (block_count == total_count)
         end
+      elsif (line.match(/DEFINER=/))
+        line = nil
       elsif (line.match(/CREATE DATABASE `([^`]+)`/))
         execute("DROP DATABASE IF EXISTS `#{$1}`")
-      elsif (line.match(/DEFINER (.*)/))
-        delimiter = $1
       end
-      
-      line.sub(/DEFINER=`[^`]+`@`[^`]+` (?:SQL SECURITY DEFINER)? /, '')
       
       if (line and line.match(/\S/) and !line.match(/^\-\-/))
         buffer << line 
       end
       
-      if (buffer.match(/#{delimiter}\s*$/))
+      if (buffer.match(/;\s*$/))
         execute(buffer) unless (ignore)
         buffer = ''
         ignore = false
@@ -302,6 +304,14 @@ end
 
 opts.on('-d', '--debug') do
   options[:debug] = true
+end
+
+opts.on('-n', '--dry-run') do
+  options[:dry_run] = true
+end
+
+opts.on('-o', '--output') do
+  options[:output] = true
 end
 
 opts.on('-e', '--env=s') do |env|
