@@ -37,7 +37,7 @@ class Undumper
     c = database_config
 
     [
-      [ 'hostname', c['hostname'] || 'localhost' ],
+      [ 'host', c['host'] || 'localhost' ],
       [ 'username', c['username'] || 'mysql' ],
       [ 'password', c['password'] || '' ],
       [ 'database', c['database'] ],
@@ -51,7 +51,7 @@ class Undumper
       begin
         c = database_config
         Mysql.new(
-          c['hostname'] || 'localhost',
+          c['host'] || 'localhost',
           c['username'] || 'mysql',
           c['password'] || '',
           '',
