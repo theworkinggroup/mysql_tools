@@ -179,6 +179,7 @@ class Undumper
     ignore = false
     
     while (line = injections.shift || fh.gets)
+      line.gsub!(/\/\*\!\d{5} (.*)\*\//, '\1')
       line.gsub!(/^\/\*\!\d{5} (.*)/, '\1')
       line.gsub!(/\*\/(;)?\s*$/, '\\1')
       
