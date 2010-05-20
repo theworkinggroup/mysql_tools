@@ -70,7 +70,7 @@ class Undumper
       if (@options[:dry_run])
         # Ignore this call in dry-run mode
       elsif (@options[:output])
-        puts sql
+        puts sql + ';'
       else
         connection.query(sql) do |res|
           res.free
@@ -150,11 +150,11 @@ class Undumper
 
   def scan_input_from(fh, table_data)
     while (line = fh.gets)
-      if (m = line.match(/^CREATE TABLE (?:IF NOT EXISTS )?`([^`]+)`/))
-        table_data[m[1]] = { }
-      elsif (m = line.match(/^INSERT INTO `([^`]+)`/))
-        table_data[m[1]][:inserts] ||= 0
-        table_data[m[1]][:inserts] += 1
+      if (line[0] == ?C and line.match(/^CREATE TABLE (?:IF NOT EXISTS )?`([^`]+)`/))
+        table_data[$1] = { }
+      elsif (line[0] == ?I and line.match(/^INSERT INTO `([^`]+)`/))
+        table_data[$1][:inserts] ||= 0
+        table_data[$1][:inserts] += 1
       end
     end
   end
@@ -177,45 +177,45 @@ class Undumper
     while (line = injections.shift || fh.gets)
       line.gsub!(/^\/\*\!\d{5} (.*)/, '\1')
       line.gsub!(/\*\/(;)?\s*$/, '\\1')
-
+      
       if (line.match(/SET NAMES/) and options[:charset])
         line = "SET NAMES #{options[:charset]};"
-      elsif (m = line.match(/^CREATE TABLE `([^`]+)`/))
-        if (should_skip_table?(m[1]))
+      elsif (line[0] == ?C and line.match(/^CREATE TABLE `([^`]+)`/))
+        if (should_skip_table?($1))
           ignore = true
         else
-          STDERR.puts "Create table: #{m[1]}"
+          STDERR.puts "Create table: #{$1}"
           block_count = 0
           start_time = Time.now
         end
-      elsif (m = line.match(/VIEW `([^`]+)`/))
-        if (should_skip_table?(m[1]) and buffer.match(/^\s*CREATE/))
+      elsif (line.match(/VIEW `([^`]+)`/))
+        if (should_skip_table?($1) and line.match(/^\s*CREATE/))
           ignore = true
         end
-      elsif (m = line.match(/^DROP (?:TABLE|VIEW)(?: IF EXISTS)? `([^`]+)`/))
-        if (should_skip_table?(m[1]))
+      elsif (line[0] == ?D and line.match(/^DROP (?:TABLE|VIEW)(?: IF EXISTS)? `([^`]+)`/))
+        if (should_skip_table?($1))
           ignore = true
         end
-      elsif (m = line. match(/^LOCK TABLES `([^`]+)`/))
-        on_table = m[1]
+      elsif (line[0] == ?L and line.match(/^LOCK TABLES `([^`]+)`/))
+        on_table = $1
 
-        if (should_skip_table?(m[1]))
+        if (should_skip_table?(on_table))
           line = nil
         end
-      elsif (m = line. match(/^UNLOCK TABLES `([^`]+)`/))
-        if (should_skip_table?(m[1]))
+      elsif (line[0] == ?U and line.match(/^UNLOCK TABLES `([^`]+)`/))
+        if (should_skip_table?($1))
           line = nil
         end
-      elsif (m = line.match(/^ALTER TABLE `([^`]+)`/))
-        if (should_skip_table?(m[1]))
+      elsif (line[0] == ?A and line.match(/^ALTER TABLE `([^`]+)`/))
+        if (should_skip_table?($1))
           line = nil
         end
-      elsif (m = line.match(/^INSERT INTO `([^`]+)`/))
-        if (should_skip_table?(m[1]) || options[:skip_data][m[1]])
+      elsif (line[0] == ?I and line.match(/^INSERT INTO `([^`]+)`/))
+        if (should_skip_table?($1) || options[:skip_data][$1])
           line = nil
         else
           block_count += 1
-          total_count = ((table_data[m[1]] and table_data[m[1]][:inserts]) or 0)
+          total_count = ((table_data[$1] and table_data[$1][:inserts]) or 0)
           STDERR.print "\r  Insert #{block_count}/#{total_count}"
           STDERR.flush
           STDERR.puts " (#{time_elapsed(start_time)})" if (block_count == total_count)
@@ -224,9 +224,6 @@ class Undumper
         line = nil
       elsif (line.match(/CREATE DATABASE `([^`]+)`/))
         execute("DROP DATABASE IF EXISTS `#{$1}`")
-      elsif (line.match(/DEFINER (.*)/))
-        delimiter = $1
-        line = nil
       end
       
       if (line and line.match(/\S/) and !line.match(/^\-\-/))
@@ -235,8 +232,13 @@ class Undumper
       
       if (buffer.match(/;\s*$/))
         execute(buffer) unless (ignore)
-        buffer = ''
+        buffer.replace('')
         ignore = false
+        
+        if (options[:small])
+          # Aggressively trigger garbage collection here
+          GC.start
+        end
       end
     end
   end
@@ -323,6 +325,11 @@ end
 
 opts.on('-u', '--skip-use') do
   options[:skip_use] = true
+end
+
+opts.on('-s', '--small') do
+  # Uses a smaller footprint
+  options[:small] = true
 end
 
 args = opts.parse(*ARGV)
