@@ -6,7 +6,6 @@ require 'optparse'
 COMMAND_OPTIONS = {
   'mysqldump' => %w[
     --quick
-    --lock-tables
     --single-transaction
     --create-options
     --tz-utc
