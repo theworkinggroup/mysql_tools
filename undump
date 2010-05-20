@@ -116,14 +116,18 @@ class Undumper
     end
     
     if (@options[:rebuild])
-      puts "Rebuilding #{database_config['database']}"
-      execute("DROP DATABASE IF EXISTS #{database_config['database']}")
-      execute("CREATE DATABASE #{database_config['database']}")
+      db = database_config['database']
+
+      puts "Rebuilding #{db}"
+
+      [
+        "DROP DATABASE IF EXISTS `%s`",
+        "CREATE DATABASE `%s`",
+        "USE `%s`"
+      ].collect { |s| s % db }.each do |query|
+        execute(query)
+      end
     end
-    
-    unless (@options[:skip_use])
-      execute("USE #{database_config['database']}")
-    end      
 
     inject_additions(:before)
 
@@ -173,7 +177,7 @@ class Undumper
     injections = [ ]
     buffer = ''
     ignore = false
-
+    
     while (line = injections.shift || fh.gets)
       line.gsub!(/^\/\*\!\d{5} (.*)/, '\1')
       line.gsub!(/\*\/(;)?\s*$/, '\\1')
@@ -222,8 +226,9 @@ class Undumper
         end
       elsif (line.match(/DEFINER=/))
         line = nil
-      elsif (line.match(/CREATE DATABASE `([^`]+)`/))
-        execute("DROP DATABASE IF EXISTS `#{$1}`")
+      elsif (line.match(/(?:CREATE|USE) DATABASE `([^`]+)`/))
+        # Will be created by the --rebuild option if required
+        line = nil
       end
       
       if (line and line.match(/\S/) and !line.match(/^\-\-/))
@@ -276,7 +281,6 @@ end
 options = {
   :skip_tables => { },
   :skip_data => { },
-  :skip_use => false,
   :only_tables => nil
 }
 
@@ -321,10 +325,6 @@ end
 
 opts.on('-e', '--env=s') do |env|
   options[:env] = env
-end
-
-opts.on('-u', '--skip-use') do
-  options[:skip_use] = true
 end
 
 opts.on('-s', '--small') do
