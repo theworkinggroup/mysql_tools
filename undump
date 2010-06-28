@@ -227,7 +227,7 @@ class Undumper
         end
       elsif (line.match(/DEFINER=/))
         line = nil
-      elsif (line.match(/(?:CREATE|USE) DATABASE `([^`]+)`/))
+      elsif (line.match(/(?:CREATE DATABASE|USE) `([^`]+)`/))
         # Will be created by the --rebuild option if required
         line = nil
       end
