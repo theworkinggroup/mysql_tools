@@ -127,6 +127,16 @@ class Undumper
       ].collect { |s| s % db }.each do |query|
         execute(query)
       end
+    elsif (@options[:use])
+      db = database_config['database']
+
+      puts "Using #{db}"
+
+      [
+        "USE `%s`"
+      ].collect { |s| s % db }.each do |query|
+        execute(query)
+      end
     end
 
     inject_additions(:before)
@@ -306,6 +316,10 @@ end
 
 opts.on('-r', '--rebuild') do
   options[:rebuild] = true
+end
+
+opts.on('-u', '--use') do
+  options[:use] = true
 end
 
 opts.on('-i', '--info') do
