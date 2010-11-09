@@ -188,6 +188,8 @@ class Undumper
     buffer = ''
     ignore = false
     
+    delimiter = ';'
+    
     while (line = injections.shift || fh.gets)
       line.gsub!(/\/\*\!\d{5} (.*?)\*\//, '\1')
       line.gsub!(/^\/\*\!\d{5} (.*?)/, '\1')
@@ -237,6 +239,9 @@ class Undumper
         end
       elsif (line.match(/DEFINER=/))
         line = nil
+      elsif (line.match(/^DELIMITER (\S+)/))
+        line = nil
+        delimiter = $1
       elsif (line.match(/(?:CREATE DATABASE|USE) `([^`]+)`/))
         # Will be created by the --rebuild option if required
         line = nil
@@ -246,7 +251,7 @@ class Undumper
         buffer << line 
       end
       
-      if (buffer.match(/;\s*$/))
+      if (buffer.match(/#{delimiter}\s*$/))
         execute(buffer) unless (ignore)
         buffer.replace('')
         ignore = false
