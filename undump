@@ -238,8 +238,6 @@ class Undumper
           STDERR.flush
           STDERR.puts " (#{time_elapsed(start_time)})" if (block_count == total_count)
         end
-      elsif (line.match(/DEFINER=/))
-        line = nil
       elsif (line.match(/^DELIMITER (\S+)/))
         line = nil
         delimiter = $1
@@ -247,7 +245,12 @@ class Undumper
         # Will be created by the --rebuild option if required
         line = nil
       end
-      
+
+      if (line and line.match(/CREATE/))
+        # Remove DEFINER to make this statement independent of user
+        line.gsub!(/DEFINER=\S+/, '')
+      end
+              
       if (line and line.match(/\S/) and !line.match(/^\-\-/))
         buffer << line 
       end
