@@ -55,7 +55,7 @@ if (config and config[environ])
   cmdline = [
     "--user=#{config['username']}",
     "--password=#{config['password']}",
-    "--default-character-set=utf8"
+    "--default-character-set=binary"
   ]
 
   if (reload and command == "mysqldump")

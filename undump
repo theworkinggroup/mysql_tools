@@ -17,7 +17,8 @@ class Undumper
   STREAM_ADDITIONS = {
     :before => [
       "SET FOREIGN_KEY_CHECKS=0",
-      "SET AUTOCOMMIT=0"
+      "SET AUTOCOMMIT=0",
+      "SET CHARACTER_SET_CONNECTION=BINARY"
     ],
     :after => [
       "SET FOREIGN_KEY_CHECKS=1",
